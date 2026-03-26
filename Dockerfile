@@ -127,6 +127,10 @@ RUN set -eux && \
     cp /usr/share/graphs1090/collectd.conf /etc/collectd/collectd.conf && \
     # Configure collectd to use /run/collectd (memory-backed for reduced writes)
     sed -i 's|DataDir.*|DataDir "/run/collectd"|' /etc/collectd/collectd.conf && \
+    # Force hostname to 'localhost' so RRD paths are predictable across all environments
+    # (Balena, Docker, Podman, etc. may assign random container hostnames)
+    sed -i '/^Hostname/d' /etc/collectd/collectd.conf && \
+    sed -i '1s|^|Hostname "localhost"\n|' /etc/collectd/collectd.conf && \
     # Install default graphs1090 config
     mkdir -p /etc/default && \
     cp /usr/share/graphs1090/default-config /etc/default/graphs1090 && \

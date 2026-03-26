@@ -49,6 +49,12 @@ if [[ ! -f "${STATS_FILE}" ]]; then
     printf '[init] WARNING: check that the readsb volume is shared (not empty) and the decoder is running\n'
 fi
 
+# Force collectd Hostname to "localhost" so RRD data lands in /run/collectd/localhost/
+# regardless of the container's actual hostname (critical for Balena and other platforms
+# that assign random or non-deterministic hostnames).
+sed -i '/^Hostname/d' /etc/collectd/collectd.conf
+sed -i '1s|^|Hostname "localhost"\n|' /etc/collectd/collectd.conf
+
 # Ensure collectd.conf points to the data-symlink
 sed -i 's|URL .*|URL "file:///usr/share/graphs1090/data-symlink"|' /etc/collectd/collectd.conf
 
@@ -71,6 +77,18 @@ RUNFOLDER=/run/collectd
 mkdir -p "${RUNFOLDER}"
 rm -f "${RUNFOLDER}/readback-complete"
 rm -rf "${RUNFOLDER}/localhost"
+
+# Safety net: if a previous run wrote data under a non-localhost hostname,
+# migrate it so the current (hostname-locked) collectd can use it.
+for _d in "${DBFOLDER}"/*/; do
+    _name="$(basename "$_d")"
+    if [[ "${_name}" != "localhost" && -d "${DBFOLDER}/${_name}" ]]; then
+        printf '[init] migrating RRD data from hostname "%s" to "localhost"\n' "${_name}"
+        mkdir -p "${DBFOLDER}/localhost"
+        cp -a "${DBFOLDER}/${_name}/." "${DBFOLDER}/localhost/" 2>/dev/null || true
+        rm -rf "${DBFOLDER}/${_name}"
+    fi
+done
 
 readback_tar() {
     local tarfile="$1"
