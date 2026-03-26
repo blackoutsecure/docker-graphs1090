@@ -1,113 +1,409 @@
-name: Create Release
+name: Release
 
 on:
+  release:
+    types:
+      - published
+      - released
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release tag (e.g. v1.0.1 or upstream version)'
-        required: true
-        type: string
-      prerelease:
-        description: 'Mark as pre-release'
+      release_name:
+        description: 'Release name (optional, defaults to upstream version)'
         required: false
-        type: boolean
-        default: false
+        type: string
 
 permissions:
   contents: write
-
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
+  packages: read
 
 env:
-  GRAPHS1090_REPO_URL: https://github.com/wiedehopf/graphs1090.git
+  REGISTRY: docker.io
+  DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
+  IMAGE_NAME: graphs1090
+  GRAPHS1090_REPO_URL: https://github.com/wiedehopf/graphs1090
   GRAPHS1090_REPO_BRANCH: master
 
 jobs:
-  release:
+  # ── Stage 1: Validate Release ────────────────────────────────────────
+  validate-release:
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.detect.outputs.release_tag }}
+      release_name: ${{ steps.detect.outputs.release_name }}
+    steps:
+      - name: Detect release source
+        id: detect
+        env:
+          EVENT_ACTION: ${{ github.event_name }}
+          DISPATCH_NAME: ${{ github.event.inputs.release_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          GRAPHS1090_REPO_BRANCH: ${{ env.GRAPHS1090_REPO_BRANCH }}
+        run: |
+          set -euo pipefail
 
+          echo "ℹ Event: ${EVENT_ACTION}"
+
+          if [ "${EVENT_ACTION}" = "workflow_dispatch" ]; then
+            echo "ℹ Manual dispatch: fetching metadata from upstream wiedehopf/graphs1090 (${GRAPHS1090_REPO_BRANCH})"
+
+            UPSTREAM_VERSION=$(curl -fsSL \
+              "https://raw.githubusercontent.com/wiedehopf/graphs1090/${GRAPHS1090_REPO_BRANCH}/version" \
+              2>/dev/null | tr -d '[:space:]')
+            if [[ -z "${UPSTREAM_VERSION}" ]]; then
+              echo "ERROR: Could not fetch version from wiedehopf/graphs1090/${GRAPHS1090_REPO_BRANCH}/version"
+              exit 1
+            fi
+
+            UPSTREAM_COMMIT=$(git ls-remote "https://github.com/wiedehopf/graphs1090.git" \
+              "refs/heads/${GRAPHS1090_REPO_BRANCH}" | cut -f1 | cut -c1-12)
+            if [[ -z "${UPSTREAM_COMMIT}" ]]; then
+              echo "ERROR: Could not fetch commit from wiedehopf/graphs1090 ${GRAPHS1090_REPO_BRANCH}"
+              exit 1
+            fi
+
+            echo "ℹ Upstream version: ${UPSTREAM_VERSION} (commit: ${UPSTREAM_COMMIT})"
+            TAG="${UPSTREAM_VERSION}"
+            NAME="${DISPATCH_NAME:-Upstream graphs1090 ${UPSTREAM_VERSION} (${UPSTREAM_COMMIT})}"
+          else
+            TAG="${RELEASE_TAG}"
+            NAME="${RELEASE_NAME:-GitHub Release}"
+            echo "ℹ GitHub release detected"
+          fi
+
+          echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "✓ Release validation passed: ${TAG}"
+
+  # ── Stage 2: Release Metadata ────────────────────────────────────────
+  release-metadata:
+    needs: validate-release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      release_name: ${{ steps.metadata.outputs.release_name }}
+      upstream_commit: ${{ steps.metadata.outputs.upstream_commit }}
+      upstream_version: ${{ steps.metadata.outputs.upstream_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Resolve upstream graphs1090 metadata
-        id: upstream
+      - name: Extract release metadata
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ needs.validate-release.outputs.release_tag }}
+          RELEASE_NAME: ${{ needs.validate-release.outputs.release_name }}
         run: |
           set -euo pipefail
+
+          VERSION="${RELEASE_TAG#v}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "ℹ Release Version: ${VERSION}"
 
           TMPDIR="$(mktemp -d)"
           trap 'rm -rf "${TMPDIR}"' EXIT
 
           git init "${TMPDIR}" >/dev/null 2>&1
-          git -C "${TMPDIR}" remote add origin "${GRAPHS1090_REPO_URL}" 2>&1
-          git -C "${TMPDIR}" fetch --depth 1 origin "${GRAPHS1090_REPO_BRANCH}" >/dev/null 2>&1
+          git -C "${TMPDIR}" remote add origin "${GRAPHS1090_REPO_URL}.git" 2>&1
+          if git -C "${TMPDIR}" fetch --depth 1 origin "${GRAPHS1090_REPO_BRANCH}" >/dev/null 2>&1; then
+            UPSTREAM_COMMIT="$(git -C "${TMPDIR}" rev-parse FETCH_HEAD 2>/dev/null | cut -c1-12)"
+            UPSTREAM_VERSION="$(git -C "${TMPDIR}" show FETCH_HEAD:version 2>/dev/null | tr -d '[:space:]' || echo "${UPSTREAM_COMMIT}")"
+            echo "ℹ Upstream graphs1090: ${UPSTREAM_VERSION} (${UPSTREAM_COMMIT})"
+          else
+            UPSTREAM_COMMIT="unknown"
+            UPSTREAM_VERSION="unknown"
+            echo "⚠ Warning: Could not fetch upstream metadata"
+          fi
 
-          commit="$(git -C "${TMPDIR}" rev-parse FETCH_HEAD 2>/dev/null)"
-          commit_short="${commit:0:12}"
-          version="$(git -C "${TMPDIR}" show FETCH_HEAD:version 2>/dev/null | tr -d '[:space:]' || echo unknown)"
+          echo "upstream_commit=${UPSTREAM_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=${UPSTREAM_VERSION}" >> "$GITHUB_OUTPUT"
 
-          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
-          echo "commit_short=${commit_short}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "Upstream version: ${version}, commit: ${commit_short}"
+  # ── Stage 3: Build and Push Docker Images ────────────────────────────
+  tag-images:
+    needs: release-metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for multi-arch builds)
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Validate Docker credentials
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
+            echo "ERROR: Docker Hub credentials not configured"
+            exit 1
+          fi
+
+          echo "ℹ Docker Hub credentials validated"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Confirm Docker auth
+        run: docker info > /dev/null && echo "✓ Docker authentication confirmed"
+
+      - name: Extract Docker metadata
+        id: docker-meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.release-metadata.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-metadata.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.release-metadata.outputs.version }}
+            type=raw,value=upstream-${{ needs.release-metadata.outputs.upstream_commit }}
+            type=raw,value=latest
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push multi-arch release
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          no-cache: false
+          pull: true
+          provenance: false
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          build-args: |
+            GRAPHS1090_REPO_URL=${{ env.GRAPHS1090_REPO_URL }}
+            GRAPHS1090_REPO_BRANCH=${{ env.GRAPHS1090_REPO_BRANCH }}
+
+  # ── Stage 4a: Create GitHub Release (workflow_dispatch) ──────────────
+  create-github-release:
+    needs: [validate-release, release-metadata, tag-images]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate release body
+        id: body
+        env:
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.version }}
+          RELEASE_TAG: ${{ needs.validate-release.outputs.release_tag }}
+          UPSTREAM_COMMIT: ${{ needs.release-metadata.outputs.upstream_commit }}
+          UPSTREAM_VERSION: ${{ needs.release-metadata.outputs.upstream_version }}
+          DOCKER_IMAGE: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
+        run: |
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          cat > /tmp/release_notes.md << EOMD
+          ## Release ${RELEASE_VERSION}
+
+          ### Docker Hub Images
+
+          **Primary Registry:**
+          \`\`\`bash
+          docker pull ${DOCKER_IMAGE}:${RELEASE_VERSION}
+          docker pull ${DOCKER_IMAGE}:latest
+          \`\`\`
+
+          **Available Tags:**
+          - \`${DOCKER_IMAGE}:${RELEASE_VERSION}\` - Specific version (recommended for production)
+          - \`${DOCKER_IMAGE}:latest\` - Latest stable release
+          - Multi-arch support: amd64, arm64
+
+          ### Build Information
+
+          - **Image Version:** ${RELEASE_VERSION}
+          - **Release Tag:** ${RELEASE_TAG}
+          - **Upstream graphs1090 Version:** ${UPSTREAM_VERSION} (from \`version\` file)
+          - **Upstream graphs1090 Commit:** ${UPSTREAM_COMMIT}
+          - **Build Date:** ${BUILD_DATE}
+          - **Repository:** https://github.com/${{ github.repository }}
+
+          ### Supported Architectures
+
+          | Architecture | Platform |
+          | --- | --- |
+          | x86-64 | linux/amd64 |
+          | ARM 64-bit | linux/arm64v8 |
+
+          ### Quick Start
+
+          \`\`\`bash
+          docker run -d \\
+            --name graphs1090 \\
+            -e TZ=Etc/UTC \\
+            -e GRAPHS1090_DECODER_DIR=/run/readsb \\
+            -p 8080:8080 \\
+            -v graphs1090-config:/config \\
+            -v collectd-rrd:/var/lib/collectd/rrd \\
+            -v /path/to/readsb/json:/run/readsb:ro \\
+            ${DOCKER_IMAGE}:${RELEASE_VERSION}
+          \`\`\`
+
+          ### Documentation
+
+          - [Full README](https://github.com/${{ github.repository }}/blob/main/README.md)
+          - [Upstream graphs1090 Documentation](https://github.com/wiedehopf/graphs1090)
+          - [Release History](https://github.com/${{ github.repository }}/releases)
+
+          ### About This Image
+
+          - **Built with:** LinuxServer.io-style patterns (s6, hardened defaults)
+          - **Maintained by:** Blackout Secure
+          - **Features:** ADS-B performance graphs, collectd, rrdtool, nginx
+          - **Official Status:** Unofficial community container (not affiliated with LinuxServer.io or wiedehopf)
+          EOMD
+          cat /tmp/release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate-release.outputs.release_tag }}
+          name: ${{ needs.release-metadata.outputs.release_name }}
+          body_path: /tmp/release_notes.md
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Stage 4b: Update Release Notes (GitHub release event) ───────────
+  create-release-notes:
+    needs: [validate-release, release-metadata]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'release' && github.event.action == 'published' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Generate release notes
         id: notes
         env:
-          UPSTREAM_COMMIT: ${{ steps.upstream.outputs.commit }}
-          UPSTREAM_COMMIT_SHORT: ${{ steps.upstream.outputs.commit_short }}
-          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
-          TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.version }}
+          RELEASE_TAG: ${{ needs.validate-release.outputs.release_tag }}
+          UPSTREAM_COMMIT: ${{ needs.release-metadata.outputs.upstream_commit }}
+          UPSTREAM_VERSION: ${{ needs.release-metadata.outputs.upstream_version }}
+          DOCKER_IMAGE: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
         run: |
-          set -euo pipefail
-          NOTES_FILE="$(mktemp)"
+          cat > /tmp/release_notes.md << 'EOF'
+          ## Release ${{ env.RELEASE_VERSION }}
 
-          {
-            echo "## Release ${TAG}"
-            echo ""
-            echo "### Upstream graphs1090"
-            echo ""
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Repository | [wiedehopf/graphs1090](https://github.com/wiedehopf/graphs1090) |"
-            echo "| Branch | \`${GRAPHS1090_REPO_BRANCH}\` |"
-            echo "| Version | \`${UPSTREAM_VERSION}\` |"
-            echo "| Commit | [\`${UPSTREAM_COMMIT_SHORT}\`](https://github.com/wiedehopf/graphs1090/commit/${UPSTREAM_COMMIT}) |"
-            echo ""
-            echo "### Docker Images"
-            echo ""
-            echo "Pull this release:"
-            echo '```bash'
-            echo "docker pull blackoutsecure/graphs1090:${TAG}"
-            echo '```'
-          } > "${NOTES_FILE}"
+          ### Docker Hub Images
 
-          echo "notes_file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
-          echo "--- Release notes ---"
-          cat "${NOTES_FILE}"
+          **Primary Registry:**
+          ```bash
+          docker pull ${{ env.DOCKER_IMAGE }}:${{ env.RELEASE_VERSION }}
+          docker pull ${{ env.DOCKER_IMAGE }}:latest
+          ```
 
-      - name: Create GitHub release
+          **Available Tags:**
+          - `${{ env.DOCKER_IMAGE }}:${{ env.RELEASE_VERSION }}` - Specific version (recommended for production)
+          - `${{ env.DOCKER_IMAGE }}:latest` - Latest stable release
+          - Multi-arch support: amd64, arm64
+
+          ### Build Information
+
+          - **Image Version:** ${{ env.RELEASE_VERSION }}
+          - **Release Tag:** ${{ env.RELEASE_TAG }}
+          - **Upstream graphs1090 Version:** ${{ env.UPSTREAM_VERSION }} (from `version` file)
+          - **Upstream graphs1090 Commit:** ${{ env.UPSTREAM_COMMIT }}
+          - **Build Date:** $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          - **Repository:** ${{ github.server_url }}/${{ github.repository }}
+
+          ### Supported Architectures
+
+          | Architecture | Platform |
+          | --- | --- |
+          | x86-64 | linux/amd64 |
+          | ARM 64-bit | linux/arm64v8 |
+
+          ### Quick Start
+
+          ```bash
+          docker run -d \
+            --name graphs1090 \
+            -e TZ=Etc/UTC \
+            -e GRAPHS1090_DECODER_DIR=/run/readsb \
+            -p 8080:8080 \
+            -v graphs1090-config:/config \
+            -v collectd-rrd:/var/lib/collectd/rrd \
+            -v /path/to/readsb/json:/run/readsb:ro \
+            ${{ env.DOCKER_IMAGE }}:${{ env.RELEASE_VERSION }}
+          ```
+
+          ### Documentation
+
+          - [Full README](https://github.com/${{ github.repository }}/blob/${{ github.ref }}/README.md)
+          - [Upstream graphs1090 Documentation](https://github.com/wiedehopf/graphs1090)
+          - [Release History](https://github.com/${{ github.repository }}/releases)
+
+          ### About This Image
+
+          - **Built with:** LinuxServer.io-style patterns (s6, hardened defaults)
+          - **Maintained by:** Blackout Secure
+          - **Features:** ADS-B performance graphs, collectd, rrdtool, nginx
+          - **Official Status:** Unofficial community container (not affiliated with LinuxServer.io or wiedehopf)
+          EOF
+          cat /tmp/release_notes.md
+
+      - name: Update Release Notes
+        uses: softprops/action-gh-release@v1
+        if: github.event.action == 'published'
+        with:
+          body_path: /tmp/release_notes.md
+          append_body: false
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
-          PRERELEASE: ${{ inputs.prerelease }}
-          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Stage 5: Summary ────────────────────────────────────────────────
+  summary:
+    needs: [validate-release, release-metadata, tag-images, create-github-release, create-release-notes]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Release Summary
+        env:
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.version }}
+          RELEASE_TAG: ${{ needs.validate-release.outputs.release_tag }}
+          DOCKER_IMAGE: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.IMAGE_NAME }}
+          UPSTREAM_VERSION: ${{ needs.release-metadata.outputs.upstream_version }}
+          UPSTREAM_COMMIT: ${{ needs.release-metadata.outputs.upstream_commit }}
         run: |
-          set -euo pipefail
+          cat << EOF
+          ===== Release Workflow Complete =====
 
-          ARGS=(
-            "${TAG}"
-            --title "${TAG}"
-            --notes-file "${NOTES_FILE}"
-            --target "${{ github.sha }}"
-          )
+          Version:                     ${{ env.RELEASE_VERSION }}
+          Release Tag:                 ${{ env.RELEASE_TAG }}
+          Docker Hub Image:            ${{ env.DOCKER_IMAGE }}:${{ env.RELEASE_VERSION }}
+          Latest Tag:                  ${{ env.DOCKER_IMAGE }}:latest
+          Upstream graphs1090 Version: ${{ env.UPSTREAM_VERSION }} (from version file)
+          Upstream graphs1090 Commit:  ${{ env.UPSTREAM_COMMIT }}
+          Repository:                  ${{ github.repository }}
+          Triggered by:                ${{ github.triggering_actor }}
+          Timestamp:                   $(date -u +'%Y-%m-%d %H:%M:%S UTC')
 
-          if [ "${PRERELEASE}" = "true" ]; then
-            ARGS+=(--prerelease)
-          fi
+          Available Tags:
+          - ${{ env.DOCKER_IMAGE }}:${{ env.RELEASE_VERSION }} (specific version)
+          - ${{ env.DOCKER_IMAGE }}:upstream-${{ env.UPSTREAM_COMMIT }} (upstream commit)
+          - ${{ env.DOCKER_IMAGE }}:latest (current stable)
+          - Architectures: amd64, arm64v8
 
-          echo "Creating release: ${TAG}"
-          gh release create "${ARGS[@]}"
-          echo "Release created: ${TAG}"
+          Next Steps:
+          1. Review release on GitHub: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
+          2. Test image pull: docker pull ${{ env.DOCKER_IMAGE }}:${{ env.RELEASE_VERSION }}
+          3. Monitor pull statistics and user issues
+
+          ===============================
+          EOF
