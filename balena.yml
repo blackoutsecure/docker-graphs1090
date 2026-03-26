@@ -1,0 +1,51 @@
+name: graphs1090
+description: >-
+  LinuxServer.io-style containerized build of graphs1090 — performance graphs
+  for readsb/dump1090-fa ADS-B receivers with signal, range, aircraft count,
+  CPU, and network statistics.
+
+post-provisioning: >-
+  ## Usage instructions
+
+  Include this snippet in your docker-compose.yml file under 'services':
+
+    ```
+    graphs1090:
+      image: blackoutsecure/graphs1090:latest
+      restart: unless-stopped
+      environment:
+        - TZ=Etc/UTC
+        - GRAPHS1090_DECODER_DIR=/run/readsb
+      ports:
+        - '8080:8080'
+      volumes:
+        - '/path/to/graphs1090/config:/config'
+        - '/path/to/collectd/rrd:/var/lib/collectd/rrd'
+        - '/path/to/readsb/run:/run/readsb:ro'
+    ```
+
+  Repository: https://github.com/blackoutsecure/docker-graphs1090
+  Upstream application: https://github.com/wiedehopf/graphs1090
+
+version: 1.0.1
+type: sw.block
+assets:
+  repository:
+    type: blob.asset
+    data:
+      url: 'https://github.com/blackoutsecure/docker-graphs1090'
+  logo:
+    type: blob.asset
+    data:
+      url: 'https://raw.githubusercontent.com/blackoutsecure/docker-graphs1090/main/logo.png'
+data:
+  defaultDeviceType: raspberrypi3
+  supportedDeviceTypes:
+    - raspberrypi3
+    - raspberrypi3-64
+    - raspberrypi4
+    - raspberrypi4-64
+    - raspberrypi400
+    - raspberrypi400-64
+    - intel-nuc
+    - genericx86-64-ext

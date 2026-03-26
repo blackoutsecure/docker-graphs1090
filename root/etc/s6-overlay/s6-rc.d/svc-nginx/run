@@ -1,0 +1,10 @@
+#!/usr/bin/with-contenv bash
+
+set -euo pipefail
+
+graphs1090_port=${GRAPHS1090_PORT:-8080}
+
+printf '[nginx] starting graphs1090 web UI on port %s\n' "${graphs1090_port}"
+printf '[nginx] web interface: http://<host-ip>:%s/graphs1090/\n' "${graphs1090_port}"
+
+exec nginx -g 'daemon off;'

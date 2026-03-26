@@ -1,0 +1,6 @@
+#!/usr/bin/with-contenv bash
+
+set -euo pipefail
+
+printf '[graphs1090] starting graph generation service\n'
+exec /usr/share/graphs1090/service-graphs1090.sh

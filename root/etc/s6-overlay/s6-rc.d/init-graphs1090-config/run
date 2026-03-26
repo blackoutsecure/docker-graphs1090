@@ -1,0 +1,146 @@
+#!/usr/bin/with-contenv bash
+
+set -euo pipefail
+
+graphs1090_user=${GRAPHS1090_USER:-abc}
+graphs1090_port=${GRAPHS1090_PORT:-8080}
+
+if [[ "${graphs1090_user}" != "root" ]]; then
+    if [[ "${graphs1090_user}" == "abc" && -z ${PUID:-} ]]; then
+        export PUID=911
+    fi
+    if [[ "${graphs1090_user}" == "abc" && -z ${PGID:-} ]]; then
+        export PGID=911
+    fi
+fi
+
+# Create required directories
+mkdir -p /config /run/graphs1090 /run/collectd /var/lib/collectd/rrd \
+         /var/lib/graphs1090/scatter /usr/share/graphs1090/data-symlink 2>/dev/null || true
+mkdir -p /tmp/nginx-client-body /tmp/nginx-proxy-temp \
+         /tmp/nginx-fastcgi-temp /tmp/nginx-uwsgi-temp /tmp/nginx-scgi-temp 2>/dev/null || true
+
+# Mount fontconfig cache to tmpfs to avoid unnecessary disk writes (from upstream boot.sh)
+if ! mount | grep -qs /var/cache/fontconfig 2>/dev/null; then
+    mount -o rw,nosuid,nodev,relatime,size=32000k,mode=755 -t tmpfs tmpfs /var/cache/fontconfig 2>/dev/null || true
+fi
+
+# Install default config if not present in /config volume
+if [[ ! -f /etc/default/graphs1090 ]]; then
+    cp /usr/share/graphs1090/default-config /etc/default/graphs1090
+fi
+
+# Set up data symlink for collectd to read decoder JSON
+# Default: expect readsb data at /run/readsb (shared volume)
+DECODER_DIR="${GRAPHS1090_DECODER_DIR:-/run/readsb}"
+SYM=/usr/share/graphs1090/data-symlink
+mkdir -p "$SYM"
+ln -snf "${DECODER_DIR}" "$SYM/data"
+
+if [[ ! -d "${DECODER_DIR}" ]]; then
+    printf '[init] WARNING: decoder directory %s does not exist\n' "${DECODER_DIR}"
+    printf '[init] WARNING: ensure a readsb/dump1090 container shares a volume at %s\n' "${DECODER_DIR}"
+fi
+
+STATS_FILE="${DECODER_DIR}/stats.json"
+if [[ ! -f "${STATS_FILE}" ]]; then
+    printf '[init] WARNING: %s not found — ADS-B graphs will be incomplete\n' "${STATS_FILE}"
+    printf '[init] WARNING: a running readsb or dump1090-fa instance must write stats.json to this path\n'
+    printf '[init] WARNING: check that the readsb volume is shared (not empty) and the decoder is running\n'
+fi
+
+# Ensure collectd.conf points to the data-symlink
+sed -i 's|URL .*|URL "file:///usr/share/graphs1090/data-symlink"|' /etc/collectd/collectd.conf
+
+# Set up 978 UAT symlink if a UAT decoder directory is provided
+UAT_DIR="${GRAPHS1090_UAT_DIR:-}"
+SYM_978=/usr/share/graphs1090/978-symlink
+mkdir -p "$SYM_978"
+if [[ -n "${UAT_DIR}" && -d "${UAT_DIR}" ]]; then
+    ln -snf "${UAT_DIR}" "$SYM_978/data"
+    # Enable URL_978 in collectd.conf if currently commented out
+    sed -i 's|^#\s*URL_978 .*|            URL_978 "file:///usr/share/graphs1090/978-symlink"|' /etc/collectd/collectd.conf
+    printf '[init] UAT 978 MHz data directory: %s\n' "${UAT_DIR}"
+fi
+
+# Readback: restore RRD data from disk to /run/collectd
+# Aligned with upstream readback.sh logic
+DBFOLDER=/var/lib/collectd/rrd
+RUNFOLDER=/run/collectd
+
+mkdir -p "${RUNFOLDER}"
+rm -f "${RUNFOLDER}/readback-complete"
+rm -rf "${RUNFOLDER}/localhost"
+
+readback_tar() {
+    local tarfile="$1"
+    if [[ ! -f "${tarfile}" ]]; then
+        return 2
+    fi
+    # Skip files that are too small to be valid
+    if (( $(stat -c %s "${tarfile}") < 50000 )); then
+        printf '[init] readback of %s skipped, file too small\n' "${tarfile}"
+        return 2
+    fi
+    if tar --overwrite --directory "${RUNFOLDER}" -xf "${tarfile}" 2>/dev/null; then
+        printf '[init] readback of %s was successful\n' "${tarfile}"
+        return 0
+    fi
+    printf '[init] readback of %s failed\n' "${tarfile}"
+    rm -rf "${RUNFOLDER}/localhost"
+    return 9
+}
+
+readback_folder() {
+    local folder="$1"
+    if [[ ! -d "${folder}" ]]; then
+        return 2
+    fi
+    if cp -a "${folder}" "${RUNFOLDER}/localhost" 2>/dev/null; then
+        printf '[init] readback of %s was successful\n' "${folder}"
+        return 0
+    fi
+    printf '[init] readback of %s failed\n' "${folder}"
+    return 9
+}
+
+readback_success() {
+    mkdir -p "${RUNFOLDER}/localhost"
+    # Delete empty RRD files (collectd chokes on them)
+    find "${RUNFOLDER}/localhost" -size -50c -type f -delete 2>/dev/null || true
+    touch "${RUNFOLDER}/readback-complete"
+}
+
+# Try primary tar, then folder, then weekly backups
+if readback_tar "${DBFOLDER}/localhost.tar.gz"; then
+    readback_success
+elif readback_folder "${DBFOLDER}/localhost"; then
+    readback_success
+elif readback_tar "${DBFOLDER}/auto-backup-$(date +%Y-week_%V).tar.gz"; then
+    readback_success
+elif readback_tar "${DBFOLDER}/auto-backup-$(date +%Y-week_%V -d '1 week ago' 2>/dev/null).tar.gz" 2>/dev/null; then
+    readback_success
+else
+    printf '[init] no valid existing RRD data found, starting fresh\n'
+    readback_success
+fi
+
+# Render nginx config from template
+mkdir -p /run/nginx/http.d 2>/dev/null || true
+sed -e "s|\${GRAPHS1090_PORT}|${graphs1090_port}|g" \
+    /etc/nginx/http.d/default.conf.template \
+    > /run/nginx/http.d/default.conf
+
+# Run boot.sh to configure HTML and generate initial graphs
+source /etc/default/graphs1090
+/usr/share/graphs1090/boot.sh nographs 2>/dev/null || true
+
+# Set ownership
+if [[ -z ${LSIO_NON_ROOT_USER:-} ]]; then
+    lsiown -R "${graphs1090_user}:${graphs1090_user}" \
+        /config /run/nginx /run/graphs1090 /run/collectd \
+        /var/lib/collectd /var/lib/graphs1090 \
+        /usr/share/graphs1090 2>/dev/null || true
+fi
+
+printf '[init] graphs1090 initialization complete\n'

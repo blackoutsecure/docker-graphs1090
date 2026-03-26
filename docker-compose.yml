@@ -1,0 +1,33 @@
+version: "2.4"
+services:
+  graphs1090:
+    image: docker.io/blackoutsecure/graphs1090:latest
+    container_name: graphs1090
+    environment:
+      TZ: Etc/UTC
+      GRAPHS1090_DECODER_DIR: /run/readsb
+    volumes:
+      - config:/config
+      - collectd-rrd:/var/lib/collectd/rrd
+      - readsb:/run/readsb:ro
+    ports:
+      - "8080:8080"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+      - /run:exec
+    restart: unless-stopped
+
+volumes:
+  config:
+  collectd-rrd:
+  readsb:

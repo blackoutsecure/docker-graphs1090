@@ -1,0 +1,113 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.1 or upstream version)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  GRAPHS1090_REPO_URL: https://github.com/wiedehopf/graphs1090.git
+  GRAPHS1090_REPO_BRANCH: master
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve upstream graphs1090 metadata
+        id: upstream
+        run: |
+          set -euo pipefail
+
+          TMPDIR="$(mktemp -d)"
+          trap 'rm -rf "${TMPDIR}"' EXIT
+
+          git init "${TMPDIR}" >/dev/null 2>&1
+          git -C "${TMPDIR}" remote add origin "${GRAPHS1090_REPO_URL}" 2>&1
+          git -C "${TMPDIR}" fetch --depth 1 origin "${GRAPHS1090_REPO_BRANCH}" >/dev/null 2>&1
+
+          commit="$(git -C "${TMPDIR}" rev-parse FETCH_HEAD 2>/dev/null)"
+          commit_short="${commit:0:12}"
+          version="$(git -C "${TMPDIR}" show FETCH_HEAD:version 2>/dev/null | tr -d '[:space:]' || echo unknown)"
+
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          echo "commit_short=${commit_short}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Upstream version: ${version}, commit: ${commit_short}"
+
+      - name: Generate release notes
+        id: notes
+        env:
+          UPSTREAM_COMMIT: ${{ steps.upstream.outputs.commit }}
+          UPSTREAM_COMMIT_SHORT: ${{ steps.upstream.outputs.commit_short }}
+          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="$(mktemp)"
+
+          {
+            echo "## Release ${TAG}"
+            echo ""
+            echo "### Upstream graphs1090"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Repository | [wiedehopf/graphs1090](https://github.com/wiedehopf/graphs1090) |"
+            echo "| Branch | \`${GRAPHS1090_REPO_BRANCH}\` |"
+            echo "| Version | \`${UPSTREAM_VERSION}\` |"
+            echo "| Commit | [\`${UPSTREAM_COMMIT_SHORT}\`](https://github.com/wiedehopf/graphs1090/commit/${UPSTREAM_COMMIT}) |"
+            echo ""
+            echo "### Docker Images"
+            echo ""
+            echo "Pull this release:"
+            echo '```bash'
+            echo "docker pull blackoutsecure/graphs1090:${TAG}"
+            echo '```'
+          } > "${NOTES_FILE}"
+
+          echo "notes_file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+          echo "--- Release notes ---"
+          cat "${NOTES_FILE}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+        run: |
+          set -euo pipefail
+
+          ARGS=(
+            "${TAG}"
+            --title "${TAG}"
+            --notes-file "${NOTES_FILE}"
+            --target "${{ github.sha }}"
+          )
+
+          if [ "${PRERELEASE}" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+
+          echo "Creating release: ${TAG}"
+          gh release create "${ARGS[@]}"
+          echo "Release created: ${TAG}"

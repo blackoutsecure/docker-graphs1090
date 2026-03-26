@@ -1,0 +1,50 @@
+#!/usr/bin/with-contenv bash
+
+# On collectd shutdown, write RRD data from /run/collectd back to persistent volume
+# Aligned with upstream writeback.sh logic
+
+TARGET=/var/lib/collectd/rrd
+RUNFOLDER=/run/collectd
+
+if [[ ! -f "${RUNFOLDER}/readback-complete" ]]; then
+    printf '[collectd-finish] readback did not complete, skipping writeback\n'
+    exit 0
+fi
+
+if [[ ! -d "${RUNFOLDER}/localhost" ]]; then
+    printf '[collectd-finish] no data in %s/localhost to write back\n' "${RUNFOLDER}"
+    exit 0
+fi
+
+printf '[collectd-finish] writing RRD data from %s to disk\n' "${RUNFOLDER}"
+mkdir -p "${TARGET}"
+
+TMPF="${TARGET}/localhost.tar.gz.tmp"
+rm -f "${TMPF}"
+
+if tar --directory "${RUNFOLDER}" -c localhost | gzip -1 -c > "${TMPF}" && [[ -f "${TMPF}" ]]; then
+    # Rotate existing tar.gz to weekly backup (only if large enough to be valid)
+    if [[ -f "${TARGET}/localhost.tar.gz" ]] && (( $(stat -c %s "${TARGET}/localhost.tar.gz") > 150000 )); then
+        BACKUP="${TARGET}/auto-backup-$(date +%Y-week_%V).tar.gz"
+        # Only overwrite backup if it's not much larger than current
+        if ! [[ -f "${BACKUP}" ]] || (( $(stat -c %s "${BACKUP}") < $(stat -c %s "${TARGET}/localhost.tar.gz") + 512 * 1024 )); then
+            mv -f "${TARGET}/localhost.tar.gz" "${BACKUP}" 2>/dev/null || true
+        fi
+        # Remove backups older than 60 days
+        find "${TARGET}" -name 'auto-backup-*.tar.gz' -mtime +60 -delete 2>/dev/null || true
+    fi
+
+    if ! sync "${TMPF}" 2>/dev/null; then
+        printf '[collectd-finish] WARNING: sync failed\n'
+    fi
+    mv -f "${TMPF}" "${TARGET}/localhost.tar.gz"
+    printf '[collectd-finish] writeback complete: %s\n' "$(du -sh "${TARGET}/localhost.tar.gz" 2>/dev/null || echo 'unknown size')"
+
+    # Remove localhost folder (tar.gz is the canonical source)
+    if [[ -d "${TARGET}/localhost" ]]; then
+        rm -rf "${TARGET}/localhost"
+    fi
+else
+    printf '[collectd-finish] FATAL: writeback failed\n'
+    rm -f "${TMPF}"
+fi

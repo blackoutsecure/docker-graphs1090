@@ -1,0 +1,55 @@
+server {
+    listen ${GRAPHS1090_PORT} default_server;
+    server_name _;
+
+    # Serve generated graph PNGs from /run/graphs1090 (tmpfs)
+    location /graphs1090/graphs/ {
+        add_header Cache-Control "public, max-age=0";
+        add_header Access-Control-Allow-Origin "*";
+        gzip on;
+        log_not_found off;
+        alias /run/graphs1090/;
+    }
+
+    # Serve the graphs1090 HTML web interface
+    location /graphs1090 {
+        alias /usr/share/graphs1090/html/;
+        absolute_redirect off;
+        try_files $uri $uri/ =404;
+        add_header Cache-Control "public, max-age=0";
+        add_header Access-Control-Allow-Origin "*";
+        gzip on;
+    }
+
+    # Serve favicon and apple-touch-icon at root for browsers that auto-discover them
+    location = /favicon.ico {
+        alias /usr/share/graphs1090/html/graphs-favicon.png;
+        access_log off;
+        log_not_found off;
+    }
+    location = /apple-touch-icon.png {
+        alias /usr/share/graphs1090/html/apple-touch-icon.png;
+        access_log off;
+        log_not_found off;
+    }
+    location = /apple-touch-icon-precomposed.png {
+        alias /usr/share/graphs1090/html/apple-touch-icon.png;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Convenience redirect: / -> /graphs1090/
+    location = / {
+        return 301 /graphs1090/;
+    }
+
+    # Convenience redirects matching upstream (perf, graph1090 without 's')
+    location /perf {
+        absolute_redirect off;
+        rewrite ^/perf/?$ /graphs1090/ permanent;
+    }
+    location /graph1090 {
+        absolute_redirect off;
+        rewrite ^/graph1090/?$ /graphs1090/ permanent;
+    }
+}
