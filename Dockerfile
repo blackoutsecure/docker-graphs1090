@@ -80,6 +80,7 @@ ENV HOME="/config" \
 #   rrdtool — round-robin database for time-series storage and graph rendering
 #   nginx — serves the web UI
 #   bash — required by graphs1090 shell scripts
+#   coreutils — GNU date (upstream uses `date -d -1min` which BusyBox lacks)
 #   fontconfig — rrdtool graph text rendering
 RUN apk add --no-cache \
         bash \
@@ -87,6 +88,7 @@ RUN apk add --no-cache \
         collectd-disk \
         collectd-python \
         collectd-rrdtool \
+        coreutils \
         fontconfig \
         nginx \
         py3-six \
