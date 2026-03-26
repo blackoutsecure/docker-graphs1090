@@ -44,7 +44,7 @@ env:
   DOCKERFILE_PATH: ./Dockerfile
   GRAPHS1090_REPO_URL: https://github.com/wiedehopf/graphs1090
   GRAPHS1090_REPO_BRANCH: master
-  BALENA_NAMESPACE: ${{ vars.BALENA_NAMESPACE || secrets.BALENA_USERNAME }}
+  BALENA_NAMESPACE: ${{ secrets.BALENA_USERNAME }}
   BALENA_BLOCK_RELEASE: graphs1090
   NO_CACHE: 'true'
 
