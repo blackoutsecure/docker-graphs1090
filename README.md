@@ -17,6 +17,8 @@ Sponsored and maintained by [Blackout Secure](https://blackoutsecure.app).
 
 > [!IMPORTANT]
 > This repository is not an official LinuxServer.io image release.
+> Want to help make it an officially supported LinuxServer.io Community image?
+> Add your support in [linuxserver/discussions/112](https://github.com/orgs/linuxserver/discussions/112).
 
 ## Overview
 
@@ -35,21 +37,46 @@ Quick links:
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
-- [Image Availability](#image-availability)
-- [About The graphs1090 Application](#about-the-graphs1090-application)
-- [Supported Architectures](#supported-architectures)
-- [Usage](#usage)
-  - [Docker Compose](#docker-compose-recommended-click-here-for-more-info)
-  - [Docker CLI](#docker-cli-click-here-for-more-info)
-  - [Balena Deployment](#balena-deployment)
-- [Parameters](#parameters)
-- [Configuration](#configuration)
-- [Application Setup](#application-setup)
-- [Troubleshooting](#troubleshooting)
-- [Release & Versioning](#release--versioning)
-- [Support & Getting Help](#support--getting-help)
-- [References](#references)
+- [blackoutsecure/graphs1090](#blackoutsecuregraphs1090)
+  - [Overview](#overview)
+  - [Table of Contents](#table-of-contents)
+  - [Quick Start](#quick-start)
+  - [Image Availability](#image-availability)
+  - [About The graphs1090 Application](#about-the-graphs1090-application)
+  - [Supported Architectures](#supported-architectures)
+  - [Usage](#usage)
+    - [docker-compose (recommended, click here for more info)](#docker-compose-recommended-click-here-for-more-info)
+    - [docker-compose paired with readsb](#docker-compose-paired-with-readsb)
+    - [docker-cli (click here for more info)](#docker-cli-click-here-for-more-info)
+    - [Balena Deployment](#balena-deployment)
+  - [Parameters](#parameters)
+    - [Ports](#ports)
+    - [Environment Variables](#environment-variables)
+    - [Storage Mounts](#storage-mounts)
+  - [Volume Details](#volume-details)
+    - [`/config` — Configuration \& Persistence](#config--configuration--persistence)
+    - [`/var/lib/collectd/rrd` — RRD Database Storage](#varlibcollectdrrd--rrd-database-storage)
+    - [`/run/readsb` — Decoder JSON Input](#runreadsb--decoder-json-input)
+  - [Configuration](#configuration)
+    - [Common Options](#common-options)
+    - [Custom Configuration via Volume Mount](#custom-configuration-via-volume-mount)
+  - [Application Setup](#application-setup)
+    - [Data Persistence](#data-persistence)
+  - [Troubleshooting](#troubleshooting)
+    - [No data / empty graphs](#no-data--empty-graphs)
+    - [Graphs take time to appear](#graphs-take-time-to-appear)
+    - [Port conflict](#port-conflict)
+    - [View logs](#view-logs)
+    - [Check service status](#check-service-status)
+    - [Getting help](#getting-help)
+  - [Release \& Versioning](#release--versioning)
+  - [Support \& Getting Help](#support--getting-help)
+  - [Sponsor \& Credits](#sponsor--credits)
+  - [References](#references)
+    - [Project Resources](#project-resources)
+    - [Upstream \& Related](#upstream--related)
+    - [Technical Resources](#technical-resources)
+  - [License](#license)
 
 ---
 
