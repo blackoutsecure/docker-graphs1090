@@ -24,7 +24,7 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp
-      - /run:exec
+      - /run:exec,uid=911,gid=911
     restart: unless-stopped
 
 volumes:

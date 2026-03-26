@@ -143,15 +143,33 @@ else
     readback_success
 fi
 
+# Create the dump1090_dbfs-NaN.rrd stub used by graphs1090's check() function.
+# Without this file, ALL graph generation fails (including system graphs) because
+# the check() fallback points to a non-existent RRD and rrdtool graph errors out.
+# Normally this file is created by the collectd dump1090.py plugin on its first
+# read cycle (~60s after start), but graph generation runs before that.
+NANDIR="${RUNFOLDER}/localhost/dump1090-localhost"
+NANRRD="${NANDIR}/dump1090_dbfs-NaN.rrd"
+if [[ ! -f "${NANRRD}" ]]; then
+    mkdir -p "${NANDIR}"
+    rrdtool create "${NANRRD}" --step 60 \
+        DS:value:GAUGE:120:U:U \
+        RRA:AVERAGE:0.8:1:3600 \
+        RRA:MAX:0.8:1:3600
+    printf '[init] created fallback NaN.rrd stub at %s\n' "${NANRRD}"
+fi
+
 # Render nginx config from template
 mkdir -p /run/nginx/http.d 2>/dev/null || true
 sed -e "s|\${GRAPHS1090_PORT}|${graphs1090_port}|g" \
     /etc/nginx/http.d/default.conf.template \
     > /run/nginx/http.d/default.conf
 
-# Run boot.sh to configure HTML and generate initial graphs
+# Run boot.sh to configure HTML (nographs = skip graph generation, done by svc-graphs1090)
 source /etc/default/graphs1090
-/usr/share/graphs1090/boot.sh nographs 2>/dev/null || true
+if ! /usr/share/graphs1090/boot.sh nographs; then
+    printf '[init] WARNING: boot.sh exited with errors\n'
+fi
 
 # Set ownership
 if [[ -z ${LSIO_NON_ROOT_USER:-} ]]; then

@@ -2,5 +2,26 @@
 
 set -euo pipefail
 
-printf '[graphs1090] starting graph generation service\n'
+# Wait for collectd to create at least one RRD file before generating graphs.
+# On first start, collectd needs ~10-30 seconds to write initial system metrics.
+RUNFOLDER=/run/collectd/localhost
+WAIT_MAX=60
+WAIT=0
+while [[ ${WAIT} -lt ${WAIT_MAX} ]]; do
+    if compgen -G "${RUNFOLDER}/cpu-*/cpu-idle.rrd" > /dev/null 2>&1; then
+        break
+    fi
+    if [[ ${WAIT} -eq 0 ]]; then
+        printf '[graphs1090] waiting for collectd to write initial RRD data...\n'
+    fi
+    sleep 5
+    WAIT=$((WAIT + 5))
+done
+
+if [[ ${WAIT} -ge ${WAIT_MAX} ]]; then
+    printf '[graphs1090] WARNING: timed out waiting for RRD data, starting anyway\n'
+else
+    printf '[graphs1090] collectd RRD data detected after %ds, starting graph generation\n' "${WAIT}"
+fi
+
 exec /usr/share/graphs1090/service-graphs1090.sh
