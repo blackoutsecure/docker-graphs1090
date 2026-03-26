@@ -27,7 +27,7 @@ This project packages upstream [wiedehopf/graphs1090](https://github.com/wiedeho
 Quick links:
 
 - Docker Hub listing: [blackoutsecure/graphs1090](https://hub.docker.com/r/blackoutsecure/graphs1090)
-- Balena block listing: [graphs1090 block on Balena Hub](https://hub.balena.io/blocks/2351129/graphs1090)
+- Balena block listing: [graphs1090 block on Balena Hub](https://hub.balena.io/blocks/2352746/graphs1090)
 - GitHub repository: [blackoutsecure/docker-graphs1090](https://github.com/blackoutsecure/docker-graphs1090)
 - Upstream application: [wiedehopf/graphs1090](https://github.com/wiedehopf/graphs1090)
 
