@@ -157,7 +157,13 @@ if [[ ! -f "${NANRRD}" ]]; then
         RRA:AVERAGE:0.8:1:3600 \
         RRA:MAX:0.8:1:3600
     printf '[init] created fallback NaN.rrd stub at %s\n' "${NANRRD}"
+else
+    printf '[init] NaN.rrd already exists (from readback)\n'
 fi
+
+# Diagnostic: show what directories exist after readback
+printf '[init] collectd data directories in %s/localhost/:\n' "${RUNFOLDER}"
+ls -1 "${RUNFOLDER}/localhost/" 2>/dev/null || printf '  (none)\n'
 
 # Render nginx config from template
 mkdir -p /run/nginx/http.d 2>/dev/null || true
