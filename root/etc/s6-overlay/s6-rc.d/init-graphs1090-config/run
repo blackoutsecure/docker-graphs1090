@@ -158,6 +158,20 @@ if [[ ! -f "${ACFTRRD}" ]]; then
         RRA:MAX:0.8:1:3600 \
         RRA:MIN:0.8:1:3600
 fi
+
+# Create DERIVE-type stubs for tracks RRDs. Without these, the graph
+# check() function falls back to dump1090_dbfs-NaN.rrd (GAUGE=1), which
+# the tracks graph misinterprets as ~3600 tracks/hour (1/s × 3600).
+for _tracks_inst in all single_message; do
+    _tracks_rrd="${NANDIR}/dump1090_tracks-${_tracks_inst}.rrd"
+    if [[ ! -f "${_tracks_rrd}" ]]; then
+        rrdtool create "${_tracks_rrd}" --step 60 \
+            DS:value:DERIVE:120:0:16000 \
+            RRA:AVERAGE:0.8:1:3600 \
+            RRA:MAX:0.8:1:3600 \
+            RRA:MIN:0.8:1:3600
+    fi
+done
 printf '[init] RRD stubs ready\n'
 
 # Diagnostic: show what directories exist after readback
