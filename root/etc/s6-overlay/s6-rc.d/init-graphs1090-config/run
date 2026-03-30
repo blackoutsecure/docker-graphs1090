@@ -132,7 +132,16 @@ NANDIR="${RUNFOLDER}/localhost/dump1090-localhost"
 mkdir -p "${NANDIR}"
 
 NANRRD="${NANDIR}/dump1090_dbfs-NaN.rrd"
-if [[ ! -f "${NANRRD}" ]]; then
+# Validate existing NaN.rrd has exactly 1 DS (value). A previous version created
+# it with 3 DS, causing collectd "expected 3 data source readings (got 1)" errors.
+# The readback tar preserves the bad file, so we must check and recreate.
+_nan_ok=false
+if [[ -f "${NANRRD}" ]]; then
+    nan_ds_count=$(rrdtool info "${NANRRD}" 2>/dev/null | grep -c '\.type = ' || true)
+    [[ "${nan_ds_count}" -eq 1 ]] && _nan_ok=true
+fi
+if ! "${_nan_ok}"; then
+    rm -f "${NANRRD}"
     rrdtool create "${NANRRD}" --step 60 \
         DS:value:GAUGE:120:U:U \
         RRA:AVERAGE:0.8:1:3600 \
@@ -150,32 +159,6 @@ if [[ ! -f "${ACFTRRD}" ]]; then
         RRA:MIN:0.8:1:3600
 fi
 printf '[init] RRD stubs ready\n'
-
-# Generate placeholder PNGs for graphs that would otherwise 404.
-# These show "No Data Available" until real graph generation overwrites them.
-# Uses the same dimensions as upstream defaults (small: 619x324, big: 1096x235).
-DOCUMENTROOT=/run/graphs1090
-_placeholder() {
-    local outfile="$1" title="$2" width="${3:-619}" height="${4:-324}"
-    [[ -f "${outfile}" ]] && return 0
-    rrdtool graph "${outfile}" \
-        --width "${width}" --height "${height}" \
-        --title "${title}" \
-        --lower-limit 0 --upper-limit 1 \
-        --vertical-label "" \
-        --color CANVAS#FFFFFF \
-        --color BACK#FFFFFF \
-        --color FONT#999999 \
-        "COMMENT:              No Data Available\\n" \
-        "COMMENT:    Waiting for decoder / receiver data\\n" \
-        >/dev/null 2>&1 || true
-}
-
-# Periods that graphs1090 generates on boot
-for p in 2h 8h 24h 48h 7d 14d 30d 90d 180d 365d 730d 1095d 1825d 3650d; do
-    _placeholder "${DOCUMENTROOT}/dump1090-localhost-misc-${p}.png" "Receiver Gain (misc)" 619 324
-done
-printf '[init] placeholder PNGs ready\n'
 
 # Diagnostic: show what directories exist after readback
 printf '[init] collectd data directories in %s/localhost/:\n' "${RUNFOLDER}"
@@ -205,6 +188,31 @@ source /etc/default/graphs1090
 if ! /usr/share/graphs1090/boot.sh nographs; then
     printf '[init] WARNING: boot.sh exited with errors\n'
 fi
+
+# Generate placeholder PNGs for graphs that would otherwise 404.
+# These show "No Data Available" until real data overwrites them.
+# Must run AFTER boot.sh which creates /run/graphs1090.
+_placeholder() {
+    local outfile="$1" title="$2" width="${3:-619}" height="${4:-324}"
+    [[ -f "${outfile}" ]] && return 0
+    rrdtool graph "${outfile}" \
+        --imgformat PNG \
+        --start end-24h --end now \
+        --width "${width}" --height "${height}" \
+        --title "${title}" \
+        --lower-limit 0 --upper-limit 1 --rigid \
+        --vertical-label "" \
+        --color CANVAS#FFFFFF \
+        --color BACK#FFFFFF \
+        --color FONT#999999 \
+        "COMMENT:              No Data Available\\n" \
+        "COMMENT:    Waiting for decoder / receiver data\\n" \
+        >/dev/null 2>&1 || true
+}
+for p in 2h 8h 24h 48h 7d 14d 30d 90d 180d 365d 730d 1095d 1825d 3650d; do
+    _placeholder "/run/graphs1090/dump1090-localhost-misc-${p}.png" "Receiver Gain (misc)"
+done
+printf '[init] placeholder PNGs ready\n'
 
 # Set ownership
 if [[ -z ${LSIO_NON_ROOT_USER:-} ]]; then
