@@ -39,7 +39,10 @@ fi
 
 # Force collectd Hostname to "localhost" so RRD paths are predictable
 # (critical for Balena and platforms with random container hostnames)
-sed -i '/^Hostname/d; 1s|^|Hostname "localhost"\n|' /etc/collectd/collectd.conf
+# NOTE: must be two separate sed calls — d immediately starts the next cycle,
+# so combining '/^Hostname/d; 1s|^|...|' silently drops the Hostname line.
+sed -i '/^Hostname/d' /etc/collectd/collectd.conf
+sed -i '1i\Hostname "localhost"' /etc/collectd/collectd.conf
 
 # Set up 978 UAT symlink if a UAT decoder directory is provided
 UAT_DIR="${GRAPHS1090_UAT_DIR:-}"

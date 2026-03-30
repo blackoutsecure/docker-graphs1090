@@ -130,7 +130,10 @@ RUN set -eux && \
     # Configure collectd to use /run/collectd (memory-backed for reduced writes)
     sed -i 's|DataDir.*|DataDir "/run/collectd"|' /etc/collectd/collectd.conf && \
     # Force hostname to 'localhost' so RRD paths are predictable across all environments
-    sed -i '/^Hostname/d; 1s|^|Hostname "localhost"\n|' /etc/collectd/collectd.conf && \
+    # NOTE: must be two separate sed calls — d immediately starts the next cycle,
+    # so combining '/^Hostname/d; 1s|^|...|' silently drops the Hostname line.
+    sed -i '/^Hostname/d' /etc/collectd/collectd.conf && \
+    sed -i '1i\Hostname "localhost"' /etc/collectd/collectd.conf && \
     # Install default graphs1090 config
     mkdir -p /etc/default && \
     cp /usr/share/graphs1090/default-config /etc/default/graphs1090 && \
