@@ -20,6 +20,7 @@ services:
       - FOWNER
       - SETUID
       - SETGID
+      - SYS_NICE
     security_opt:
       - no-new-privileges:true
     tmpfs:

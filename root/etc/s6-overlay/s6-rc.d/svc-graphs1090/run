@@ -2,37 +2,24 @@
 
 set -euo pipefail
 
-# Wait for collectd to create at least one system RRD file before generating graphs.
-# collectd uses a 60-second interval, so the first write occurs ~60-70s after start.
-# If readback restored data from a previous run, files already exist and we proceed
-# immediately.
+# Wait for collectd to create at least one system RRD before generating graphs.
+# If readback restored data, files already exist and we skip the wait.
 RUNFOLDER=/run/collectd/localhost
 WAIT_MAX=120
 WAIT=0
 while [[ ${WAIT} -lt ${WAIT_MAX} ]]; do
-    # Check for aggregation-cpu-average (created by collectd's aggregation plugin)
-    # or any system_stats directory (created by the Python system_stats plugin)
-    if [[ -d "${RUNFOLDER}/aggregation-cpu-average" ]] || [[ -d "${RUNFOLDER}/system_stats" ]]; then
+    if [[ -d "${RUNFOLDER}/aggregation-cpu-average" || -d "${RUNFOLDER}/system_stats" ]]; then
         break
     fi
     if [[ ${WAIT} -eq 0 ]]; then
-        printf '[graphs1090] waiting for collectd to write initial RRD data...\n'
-        # Diagnostic: show what exists so far
-        if [[ -d "${RUNFOLDER}" ]]; then
-            printf '[graphs1090] current contents of %s:\n' "${RUNFOLDER}"
-            ls -1 "${RUNFOLDER}" 2>/dev/null || printf '  (empty)\n'
-        else
-            printf '[graphs1090] WARNING: %s does not exist yet\n' "${RUNFOLDER}"
-        fi
+        printf '[graphs1090] waiting for collectd RRD data...\n'
     fi
     sleep 5
     WAIT=$((WAIT + 5))
 done
 
 if [[ ${WAIT} -ge ${WAIT_MAX} ]]; then
-    printf '[graphs1090] WARNING: timed out waiting for RRD data after %ds, starting anyway\n' "${WAIT_MAX}"
-    printf '[graphs1090] contents of %s:\n' "${RUNFOLDER}"
-    ls -1 "${RUNFOLDER}" 2>/dev/null || printf '  (directory missing)\n'
+    printf '[graphs1090] WARNING: timed out after %ds, starting anyway\n' "${WAIT_MAX}"
 else
     printf '[graphs1090] collectd RRD data detected after %ds\n' "${WAIT}"
 fi
