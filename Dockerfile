@@ -138,6 +138,19 @@ RUN set -eux && \
     bash /usr/share/graphs1090/adjust-scripts-s6-sh && \
     # Set ownership
     chown -R 911:911 /config /usr/share/graphs1090 /run/graphs1090 /var/lib/collectd /var/lib/graphs1090 && \
+    # Generate a placeholder PNG for graphs that have no data source.
+    # Built at image time so it's guaranteed to work (no runtime state dependencies).
+    rrdtool create /tmp/stub.rrd --step 60 DS:value:GAUGE:120:U:U RRA:AVERAGE:0.8:1:60 && \
+    rrdtool graph /usr/share/graphs1090/no-data.png \
+        --imgformat PNG --start end-24h --end now \
+        --width 619 --height 324 --title "No Data Available" \
+        --lower-limit 0 --upper-limit 1 --rigid \
+        --vertical-label "" \
+        --color "CANVAS#FFFFFF" --color "BACK#FFFFFF" --color "FONT#999999" \
+        "DEF:x=/tmp/stub.rrd:value:AVERAGE" \
+        "COMMENT:              No Data Available\n" \
+        "COMMENT:    Waiting for decoder / receiver data\n" && \
+    rm /tmp/stub.rrd && \
     # Cleanup
     rm -rf /tmp/* /var/tmp/* /var/cache/apk/*
 
