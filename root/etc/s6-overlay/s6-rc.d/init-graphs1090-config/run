@@ -190,29 +190,32 @@ if ! /usr/share/graphs1090/boot.sh nographs; then
 fi
 
 # Generate placeholder PNGs for graphs that would otherwise 404.
-# These show "No Data Available" until real data overwrites them.
+# Uses the NaN.rrd stub with rrdtool graph to produce a valid graph-style PNG.
 # Must run AFTER boot.sh which creates /run/graphs1090.
 _placeholder() {
-    local outfile="$1" title="$2" width="${3:-619}" height="${4:-324}"
+    local outfile="$1" title="$2"
     [[ -f "${outfile}" ]] && return 0
     rrdtool graph "${outfile}" \
         --imgformat PNG \
         --start end-24h --end now \
-        --width "${width}" --height "${height}" \
+        --width 619 --height 324 \
         --title "${title}" \
         --lower-limit 0 --upper-limit 1 --rigid \
         --vertical-label "" \
         --color CANVAS#FFFFFF \
         --color BACK#FFFFFF \
         --color FONT#999999 \
+        DEF:x="${NANRRD}":value:AVERAGE \
         "COMMENT:              No Data Available\\n" \
         "COMMENT:    Waiting for decoder / receiver data\\n" \
-        >/dev/null 2>&1 || true
+        2>/dev/null || true
 }
+_placeholder_count=0
 for p in 2h 8h 24h 48h 7d 14d 30d 90d 180d 365d 730d 1095d 1825d 3650d; do
     _placeholder "/run/graphs1090/dump1090-localhost-misc-${p}.png" "Receiver Gain (misc)"
+    [[ -f "/run/graphs1090/dump1090-localhost-misc-${p}.png" ]] && (( _placeholder_count++ )) || true
 done
-printf '[init] placeholder PNGs ready\n'
+printf '[init] placeholder PNGs: %d of 14 generated\n' "${_placeholder_count}"
 
 # Set ownership
 if [[ -z ${LSIO_NON_ROOT_USER:-} ]]; then
