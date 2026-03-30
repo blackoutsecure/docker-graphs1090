@@ -202,20 +202,8 @@ _placeholder_count=0
 
 if [[ ! -f "${_placeholder_src}" ]]; then
     printf '[init] WARNING: placeholder source %s not found — generating fallback\n' "${_placeholder_src}" >&2
-    # Generate a minimal placeholder at runtime as a fallback
-    _stub="/tmp/placeholder-stub-$$.rrd"
-    if rrdtool create "${_stub}" --step 60 DS:value:GAUGE:120:U:U RRA:AVERAGE:0.8:1:60 2>/dev/null; then
-        rrdtool graph "${_placeholder_src}" \
-            --imgformat PNG --start end-24h --end now \
-            --width 619 --height 324 --title "No Data Available" \
-            --lower-limit 0 --upper-limit 1 --rigid \
-            --vertical-label "" \
-            --color "CANVAS#FFFFFF" --color "BACK#FFFFFF" --color "FONT#999999" \
-            "DEF:x=${_stub}:value:AVERAGE" \
-            "COMMENT:              No Data Available\n" \
-            "COMMENT:    Waiting for decoder / receiver data\n" 2>/dev/null || true
-        rm -f "${_stub}"
-    fi
+    # Generate a minimal white PNG placeholder using Python (no rrdtool dependency)
+    python3 -c "import struct,zlib;W=619;H=324;raw=b''.join(b'\x00'+bytes([255,255,255])*W for _ in range(H));c=zlib.compress(raw);chunk=lambda t,d:struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff);f=open('${_placeholder_src}','wb');f.write(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',W,H,8,2,0,0,0))+chunk(b'IDAT',c)+chunk(b'IEND',b''));f.close()" 2>/dev/null || true
 fi
 
 # Ensure the placeholder is also in the HTML dir for nginx error_page fallback

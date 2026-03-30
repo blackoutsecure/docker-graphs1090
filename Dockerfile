@@ -136,26 +136,17 @@ RUN set -eux && \
     cp /usr/share/graphs1090/default-config /etc/default/graphs1090 && \
     # Adjust scripts for s6 (replace systemctl calls with s6-svc)
     bash /usr/share/graphs1090/adjust-scripts-s6-sh && \
-    # Set ownership
-    chown -R 911:911 /config /usr/share/graphs1090 /run/graphs1090 /var/lib/collectd /var/lib/graphs1090 && \
     # Generate a placeholder PNG for graphs that have no data source.
-    # Built at image time so it's guaranteed to work (no runtime state dependencies).
-    rrdtool create /tmp/stub.rrd --step 60 DS:value:GAUGE:120:U:U RRA:AVERAGE:0.8:1:60 && \
-    rrdtool graph /usr/share/graphs1090/no-data.png \
-        --imgformat PNG --start end-24h --end now \
-        --width 619 --height 324 --title "No Data Available" \
-        --lower-limit 0 --upper-limit 1 --rigid \
-        --vertical-label "" \
-        --color "CANVAS#FFFFFF" --color "BACK#FFFFFF" --color "FONT#999999" \
-        "DEF:x=/tmp/stub.rrd:value:AVERAGE" \
-        "COMMENT:              No Data Available\n" \
-        "COMMENT:    Waiting for decoder / receiver data\n" && \
-    rm /tmp/stub.rrd && \
-    # Verify the placeholder PNG was created successfully
-    test -f /usr/share/graphs1090/no-data.png && \
+    # Uses Python + minimal PNG encoder (no PIL needed) since rrdtool graph
+    # silently fails to create files in some build environments.
+    python3 -c "import struct,zlib;W=619;H=324;raw=b''.join(b'\x00'+bytes([255,255,255])*W for _ in range(H));c=zlib.compress(raw);chunk=lambda t,d:struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff);f=open('/tmp/no-data.png','wb');f.write(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',W,H,8,2,0,0,0))+chunk(b'IDAT',c)+chunk(b'IEND',b''));f.close()" && \
+    test -f /tmp/no-data.png && \
+    cp /tmp/no-data.png /usr/share/graphs1090/no-data.png && \
+    cp /tmp/no-data.png /usr/share/graphs1090/html/no-data.png && \
+    rm /tmp/no-data.png && \
     echo "no-data.png created: $(stat -c %s /usr/share/graphs1090/no-data.png) bytes" && \
-    # Also install into HTML dir so nginx can serve it as a fallback for missing graphs
-    cp /usr/share/graphs1090/no-data.png /usr/share/graphs1090/html/no-data.png && \
+    # Set ownership (after all file creation is done)
+    chown -R 911:911 /config /usr/share/graphs1090 /run/graphs1090 /var/lib/collectd /var/lib/graphs1090 && \
     # Cleanup
     rm -rf /tmp/* /var/tmp/* /var/cache/apk/*
 
