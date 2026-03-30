@@ -16,14 +16,34 @@ while [[ ${WAIT} -lt ${WAIT_MAX} ]]; do
     fi
     sleep 5
     WAIT=$((WAIT + 5))
+    # Periodic status while waiting
+    if (( WAIT % 15 == 0 )); then
+        _dirs=$(ls -1 "${RUNFOLDER}/" 2>/dev/null | tr '\n' ' ' || echo 'none')
+        printf '[graphs1090] still waiting (%ds)... directories so far: %s\n' "${WAIT}" "${_dirs:-none}"
+    fi
 done
 
 if [[ ${WAIT} -ge ${WAIT_MAX} ]]; then
-    printf '[graphs1090] WARNING: timed out after %ds, starting anyway\n' "${WAIT_MAX}"
+    printf '[graphs1090] WARNING: timed out after %ds waiting for collectd data, starting anyway\n' "${WAIT_MAX}" >&2
 else
     printf '[graphs1090] collectd RRD data detected after %ds\n' "${WAIT}"
 fi
 
+# Log RRD directories and graph output state
+_rrd_dirs=$(ls -1 "${RUNFOLDER}/" 2>/dev/null | tr '\n' ' ' || echo 'none')
+printf '[graphs1090] RRD data directories: %s\n' "${_rrd_dirs:-none}"
+
+# Check for disk RRD data (helps diagnose disk_io graph issues)
+_disk_rrds=$(find "${RUNFOLDER}" -path '*/disk-*/disk_*' -name '*.rrd' 2>/dev/null | head -5)
+if [[ -n "${_disk_rrds}" ]]; then
+    printf '[graphs1090] disk RRD data found:\n'
+    echo "${_disk_rrds}" | while read -r f; do printf '  %s\n' "$f"; done
+else
+    printf '[graphs1090] WARNING: no disk RRD data found — disk_io graphs will show placeholder\n' >&2
+fi
+
+_graph_count=$(find /run/graphs1090/ -name '*.png' 2>/dev/null | wc -l)
+printf '[graphs1090] existing graph PNGs: %d\n' "${_graph_count}"
 printf '[graphs1090] starting graph generation service\n'
 
 exec /usr/share/graphs1090/service-graphs1090.sh

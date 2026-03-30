@@ -3,4 +3,25 @@
 set -euo pipefail
 
 printf '[collectd] starting collectd data collector\n'
+
+# Log key collectd configuration for debugging
+if [[ -f /etc/collectd/collectd.conf ]]; then
+    _hostname=$(grep -m1 '^Hostname' /etc/collectd/collectd.conf | awk '{print $2}' || echo '?')
+    _datadir=$(grep -m1 'DataDir' /etc/collectd/collectd.conf | awk '{print $2}' || echo '?')
+    printf '[collectd] config: Hostname=%s DataDir=%s\n' "${_hostname}" "${_datadir}"
+fi
+
+# Log available block devices (helps diagnose disk_io 404s)
+_blockdevs=$(lsblk -dnpo NAME 2>/dev/null | tr '\n' ' ' || echo 'none detected')
+printf '[collectd] block devices visible: %s\n' "${_blockdevs:-none detected}"
+
+# Log decoder symlink status
+_decoder_link=$(readlink -f /usr/share/graphs1090/data-symlink/data 2>/dev/null || echo 'missing')
+printf '[collectd] decoder data symlink: %s\n' "${_decoder_link}"
+if [[ -f "${_decoder_link}/stats.json" ]]; then
+    printf '[collectd] stats.json: found (%s bytes)\n' "$(stat -c %s "${_decoder_link}/stats.json" 2>/dev/null || echo '?')"
+else
+    printf '[collectd] WARNING: stats.json not found — ADS-B data will not be collected\n' >&2
+fi
+
 exec collectd -f -C /etc/collectd/collectd.conf

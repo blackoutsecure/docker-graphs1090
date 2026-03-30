@@ -7,16 +7,18 @@ TARGET=/var/lib/collectd/rrd
 RUNFOLDER=/run/collectd
 
 if [[ ! -f "${RUNFOLDER}/readback-complete" ]]; then
-    printf '[collectd-finish] readback did not complete, skipping writeback\n'
+    printf '[collectd-finish] WARNING: readback did not complete, skipping writeback\n' >&2
     exit 0
 fi
 
 if [[ ! -d "${RUNFOLDER}/localhost" ]]; then
-    printf '[collectd-finish] no data in %s/localhost to write back\n' "${RUNFOLDER}"
+    printf '[collectd-finish] WARNING: no data in %s/localhost to write back\n' "${RUNFOLDER}" >&2
     exit 0
 fi
 
-printf '[collectd-finish] writing RRD data from %s to disk\n' "${RUNFOLDER}"
+printf '[collectd-finish] writing RRD data from %s to disk...\n' "${RUNFOLDER}"
+_rrd_count=$(find "${RUNFOLDER}/localhost" -name '*.rrd' 2>/dev/null | wc -l)
+printf '[collectd-finish] RRD files to write back: %d\n' "${_rrd_count}"
 mkdir -p "${TARGET}"
 
 TMPF="${TARGET}/localhost.tar.gz.tmp"
@@ -35,7 +37,7 @@ if tar --directory "${RUNFOLDER}" -c localhost | gzip -1 -c > "${TMPF}" && [[ -f
     fi
 
     if ! sync "${TMPF}" 2>/dev/null; then
-        printf '[collectd-finish] WARNING: sync failed\n'
+        printf '[collectd-finish] WARNING: sync failed\n' >&2
     fi
     mv -f "${TMPF}" "${TARGET}/localhost.tar.gz"
     printf '[collectd-finish] writeback complete: %s\n' "$(du -sh "${TARGET}/localhost.tar.gz" 2>/dev/null || echo 'unknown size')"
@@ -45,6 +47,6 @@ if tar --directory "${RUNFOLDER}" -c localhost | gzip -1 -c > "${TMPF}" && [[ -f
         rm -rf "${TARGET}/localhost"
     fi
 else
-    printf '[collectd-finish] FATAL: writeback failed\n'
+    printf '[collectd-finish] ERROR: writeback failed\n' >&2
     rm -f "${TMPF}"
 fi

@@ -3,12 +3,15 @@ server {
     server_name _;
 
     # Serve generated graph PNGs from /run/graphs1090 (tmpfs)
+    # If a graph PNG hasn't been generated yet, serve a "No Data Available"
+    # placeholder instead of a 404 broken image.
     location /graphs1090/graphs/ {
         add_header Cache-Control "public, max-age=0";
         add_header Access-Control-Allow-Origin "*";
         gzip on;
         log_not_found off;
         alias /run/graphs1090/;
+        error_page 404 =200 /graphs1090/no-data.png;
     }
 
     # Serve the graphs1090 HTML web interface

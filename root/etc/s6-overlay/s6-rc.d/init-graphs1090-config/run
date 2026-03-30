@@ -32,9 +32,9 @@ DECODER_DIR="${GRAPHS1090_DECODER_DIR:-/run/readsb}"
 ln -snf "${DECODER_DIR}" /usr/share/graphs1090/data-symlink/data
 
 if [[ ! -d "${DECODER_DIR}" ]]; then
-    printf '[init] WARNING: decoder directory %s not found — ensure a readsb/dump1090 container shares a volume there\n' "${DECODER_DIR}"
+    printf '[init] WARNING: decoder directory %s not found — ensure a readsb/dump1090 container shares a volume there\n' "${DECODER_DIR}" >&2
 elif [[ ! -f "${DECODER_DIR}/stats.json" ]]; then
-    printf '[init] WARNING: %s/stats.json not found — ADS-B graphs will be incomplete until the decoder is running\n' "${DECODER_DIR}"
+    printf '[init] WARNING: %s/stats.json not found — ADS-B graphs will be incomplete until the decoder is running\n' "${DECODER_DIR}" >&2
 fi
 
 # Force collectd Hostname to "localhost" so RRD paths are predictable
@@ -75,14 +75,14 @@ readback_tar() {
     fi
     # Skip files that are too small to be valid
     if (( $(stat -c %s "${tarfile}") < 50000 )); then
-        printf '[init] readback of %s skipped, file too small\n' "${tarfile}"
+        printf '[init] WARNING: readback of %s skipped, file too small\n' "${tarfile}" >&2
         return 2
     fi
     if tar --overwrite --directory "${RUNFOLDER}" -xf "${tarfile}" 2>/dev/null; then
         printf '[init] readback of %s was successful\n' "${tarfile}"
         return 0
     fi
-    printf '[init] readback of %s failed\n' "${tarfile}"
+    printf '[init] ERROR: readback of %s failed\n' "${tarfile}" >&2
     rm -rf "${RUNFOLDER}/localhost"
     return 9
 }
@@ -96,7 +96,7 @@ readback_folder() {
         printf '[init] readback of %s was successful\n' "${folder}"
         return 0
     fi
-    printf '[init] readback of %s failed\n' "${folder}"
+    printf '[init] ERROR: readback of %s failed\n' "${folder}" >&2
     return 9
 }
 
@@ -164,6 +164,10 @@ printf '[init] RRD stubs ready\n'
 printf '[init] collectd data directories in %s/localhost/:\n' "${RUNFOLDER}"
 ls -1 "${RUNFOLDER}/localhost/" 2>/dev/null || printf '  (none)\n'
 
+# Count RRD files for visibility
+_rrd_total=$(find "${RUNFOLDER}/localhost" -name '*.rrd' 2>/dev/null | wc -l)
+printf '[init] total RRD files after readback: %d\n' "${_rrd_total}"
+
 # Symlink /var/lib/collectd/rrd/localhost → /run/collectd/localhost
 # Upstream graphs1090.sh sources /etc/default/graphs1090 twice; the second source
 # resets DB back to /var/lib/collectd/rrd after the autodetect. The symlink makes
@@ -186,19 +190,68 @@ sed -e "s|\${GRAPHS1090_PORT}|${graphs1090_port}|" \
 # Run boot.sh to configure HTML (nographs = skip graph generation, done by svc-graphs1090)
 source /etc/default/graphs1090
 if ! /usr/share/graphs1090/boot.sh nographs; then
-    printf '[init] WARNING: boot.sh exited with errors\n'
+    printf '[init] ERROR: boot.sh exited with errors\n' >&2
 fi
 
 # Copy placeholder PNGs for graphs that would otherwise 404 (e.g. misc when
-# no gain-reporting hardware exists). The PNG is baked into the image at build
-# time so this is a simple cp — no rrdtool dependency at runtime.
+# no gain-reporting hardware exists, disk_io when block devices aren't visible).
+# The PNG is baked into the image at build time so this is a simple cp — no
+# rrdtool dependency at runtime.
+_placeholder_src="/usr/share/graphs1090/no-data.png"
 _placeholder_count=0
-for p in 2h 8h 24h 48h 7d 14d 30d 90d 180d 365d 730d 1095d 1825d 3650d; do
-    _target="/run/graphs1090/dump1090-localhost-misc-${p}.png"
-    if [[ ! -f "${_target}" ]]; then
-        cp /usr/share/graphs1090/no-data.png "${_target}" 2>/dev/null && (( _placeholder_count++ )) || true
+
+if [[ ! -f "${_placeholder_src}" ]]; then
+    printf '[init] WARNING: placeholder source %s not found — generating fallback\n' "${_placeholder_src}" >&2
+    # Generate a minimal placeholder at runtime as a fallback
+    _stub="/tmp/placeholder-stub-$$.rrd"
+    if rrdtool create "${_stub}" --step 60 DS:value:GAUGE:120:U:U RRA:AVERAGE:0.8:1:60 2>/dev/null; then
+        rrdtool graph "${_placeholder_src}" \
+            --imgformat PNG --start end-24h --end now \
+            --width 619 --height 324 --title "No Data Available" \
+            --lower-limit 0 --upper-limit 1 --rigid \
+            --vertical-label "" \
+            --color "CANVAS#FFFFFF" --color "BACK#FFFFFF" --color "FONT#999999" \
+            "DEF:x=${_stub}:value:AVERAGE" \
+            "COMMENT:              No Data Available\n" \
+            "COMMENT:    Waiting for decoder / receiver data\n" 2>/dev/null || true
+        rm -f "${_stub}"
     fi
-done
+fi
+
+# Ensure the placeholder is also in the HTML dir for nginx error_page fallback
+if [[ -f "${_placeholder_src}" && ! -f /usr/share/graphs1090/html/no-data.png ]]; then
+    cp "${_placeholder_src}" /usr/share/graphs1090/html/no-data.png
+    printf '[init] copied placeholder to HTML dir for nginx fallback\n'
+fi
+
+if [[ -f "${_placeholder_src}" ]]; then
+    printf '[init] placeholder source: %s (%s bytes)\n' "${_placeholder_src}" "$(stat -c %s "${_placeholder_src}" 2>/dev/null || echo '?')"
+
+    # Graph basenames that may 404 when their data source is unavailable:
+    #   dump1090-localhost-misc      — requires gain-reporting hardware
+    #   system-localhost-disk_io_iops   — requires visible block devices
+    #   system-localhost-disk_io_octets — requires visible block devices
+    _placeholder_graphs=(
+        "dump1090-localhost-misc"
+        "system-localhost-disk_io_iops"
+        "system-localhost-disk_io_octets"
+    )
+
+    for _graph in "${_placeholder_graphs[@]}"; do
+        for p in 2h 8h 24h 48h 7d 14d 30d 90d 180d 365d 730d 1095d 1825d 3650d; do
+            _target="/run/graphs1090/${_graph}-${p}.png"
+            if [[ ! -f "${_target}" ]]; then
+                if cp "${_placeholder_src}" "${_target}"; then
+                    _placeholder_count=$(( _placeholder_count + 1 ))
+                else
+                    printf '[init] ERROR: failed to create placeholder %s\n' "${_target}" >&2
+                fi
+            fi
+        done
+    done
+else
+    printf '[init] ERROR: no placeholder source available — some graphs will 404 until data is collected\n' >&2
+fi
 printf '[init] placeholder PNGs: %d created\n' "${_placeholder_count}"
 
 # Set ownership

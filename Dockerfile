@@ -151,6 +151,11 @@ RUN set -eux && \
         "COMMENT:              No Data Available\n" \
         "COMMENT:    Waiting for decoder / receiver data\n" && \
     rm /tmp/stub.rrd && \
+    # Verify the placeholder PNG was created successfully
+    test -f /usr/share/graphs1090/no-data.png && \
+    echo "no-data.png created: $(stat -c %s /usr/share/graphs1090/no-data.png) bytes" && \
+    # Also install into HTML dir so nginx can serve it as a fallback for missing graphs
+    cp /usr/share/graphs1090/no-data.png /usr/share/graphs1090/html/no-data.png && \
     # Cleanup
     rm -rf /tmp/* /var/tmp/* /var/cache/apk/*
 
