@@ -165,7 +165,20 @@ fi
 printf '[init] collectd data directories in %s/localhost/:\n' "${RUNFOLDER}"
 ls -1 "${RUNFOLDER}/localhost/" 2>/dev/null || printf '  (none)\n'
 
-# Fix DB path in graphs1090 config.
+# Create compatibility symlink: /var/lib/collectd/rrd/localhost → /run/collectd/localhost
+# Upstream graphs1090.sh sources /etc/default/graphs1090 TWICE. The second source runs
+# AFTER the autodetect that sets DB=/run/collectd, resetting DB back to
+# /var/lib/collectd/rrd. This causes all graph generation to fail because the data
+# lives in /run/collectd/localhost (tmpfs). The symlink makes both paths equivalent
+# so graphs generate correctly regardless of which DB value the script resolves to.
+# Readback has already completed above, so removing the stale directory is safe.
+if [[ -d "${DBFOLDER}/localhost" && ! -L "${DBFOLDER}/localhost" ]]; then
+    rm -rf "${DBFOLDER}/localhost"
+fi
+ln -snf "${RUNFOLDER}/localhost" "${DBFOLDER}/localhost"
+printf '[init] symlink: %s/localhost → %s/localhost\n' "${DBFOLDER}" "${RUNFOLDER}"
+
+# Fix DB path in graphs1090 config (belt-and-suspenders with the symlink above).
 # Upstream graphs1090.sh sources /etc/default/graphs1090 twice — the second source
 # resets DB back to /var/lib/collectd/rrd AFTER the /run/collectd autodetect.
 # Since we always use /run/collectd (tmpfs-backed), set it explicitly.
