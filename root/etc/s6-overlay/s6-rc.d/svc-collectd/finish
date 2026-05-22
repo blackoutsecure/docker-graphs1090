@@ -3,22 +3,26 @@
 # On collectd shutdown, write RRD data from /run/collectd back to persistent volume
 # Aligned with upstream writeback.sh logic
 
+# shellcheck disable=SC1091
+source /usr/local/bin/log-functions.sh
+SVC_NAME="collectd-finish"
+
 TARGET=/var/lib/collectd/rrd
 RUNFOLDER=/run/collectd
 
 if [[ ! -f "${RUNFOLDER}/readback-complete" ]]; then
-    printf '[collectd-finish] WARNING: readback did not complete, skipping writeback\n' >&2
+    log_warn "readback did not complete, skipping writeback"
     exit 0
 fi
 
 if [[ ! -d "${RUNFOLDER}/localhost" ]]; then
-    printf '[collectd-finish] WARNING: no data in %s/localhost to write back\n' "${RUNFOLDER}" >&2
+    log_warn "no data in ${RUNFOLDER}/localhost to write back"
     exit 0
 fi
 
-printf '[collectd-finish] writing RRD data from %s to disk...\n' "${RUNFOLDER}"
+log_info "writing RRD data from ${RUNFOLDER} to disk..."
 _rrd_count=$(find "${RUNFOLDER}/localhost" -name '*.rrd' 2>/dev/null | wc -l)
-printf '[collectd-finish] RRD files to write back: %d\n' "${_rrd_count}"
+log_info "RRD files to write back: ${_rrd_count}"
 mkdir -p "${TARGET}"
 
 TMPF="${TARGET}/localhost.tar.gz.tmp"
@@ -37,16 +41,16 @@ if tar --directory "${RUNFOLDER}" -c localhost | gzip -1 -c > "${TMPF}" && [[ -f
     fi
 
     if ! sync "${TMPF}" 2>/dev/null; then
-        printf '[collectd-finish] WARNING: sync failed\n' >&2
+        log_warn "sync failed"
     fi
     mv -f "${TMPF}" "${TARGET}/localhost.tar.gz"
-    printf '[collectd-finish] writeback complete: %s\n' "$(du -sh "${TARGET}/localhost.tar.gz" 2>/dev/null || echo 'unknown size')"
+    log_info "writeback complete: $(du -sh "${TARGET}/localhost.tar.gz" 2>/dev/null || echo 'unknown size')"
 
     # Remove localhost folder (tar.gz is the canonical source)
     if [[ -d "${TARGET}/localhost" ]]; then
         rm -rf "${TARGET}/localhost"
     fi
 else
-    printf '[collectd-finish] ERROR: writeback failed\n' >&2
+    log_error "writeback failed"
     rm -f "${TMPF}"
 fi

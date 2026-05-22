@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC1091
+source /usr/local/bin/log-functions.sh
+SVC_NAME="init"
+
 graphs1090_user=${GRAPHS1090_USER:-abc}
 graphs1090_port=${GRAPHS1090_PORT:-8080}
 
@@ -32,9 +36,9 @@ DECODER_DIR="${GRAPHS1090_DECODER_DIR:-/run/readsb}"
 ln -snf "${DECODER_DIR}" /usr/share/graphs1090/data-symlink/data
 
 if [[ ! -d "${DECODER_DIR}" ]]; then
-    printf '[init] WARNING: decoder directory %s not found — ensure a readsb/dump1090 container shares a volume there\n' "${DECODER_DIR}" >&2
+    log_warn "decoder directory ${DECODER_DIR} not found — ensure a readsb/dump1090 container shares a volume there"
 elif [[ ! -f "${DECODER_DIR}/stats.json" ]]; then
-    printf '[init] WARNING: %s/stats.json not found — ADS-B graphs will be incomplete until the decoder is running\n' "${DECODER_DIR}" >&2
+    log_warn "${DECODER_DIR}/stats.json not found — ADS-B graphs will be incomplete until the decoder is running"
 fi
 
 # Force collectd Hostname to "localhost" so RRD paths are predictable
@@ -49,7 +53,7 @@ UAT_DIR="${GRAPHS1090_UAT_DIR:-}"
 if [[ -n "${UAT_DIR}" && -d "${UAT_DIR}" ]]; then
     ln -snf "${UAT_DIR}" /usr/share/graphs1090/978-symlink/data
     sed -i 's|^#\s*URL_978 .*|            URL_978 "file:///usr/share/graphs1090/978-symlink"|' /etc/collectd/collectd.conf
-    printf '[init] UAT 978 MHz data directory: %s\n' "${UAT_DIR}"
+    log_info "UAT 978 MHz data directory: ${UAT_DIR}"
 fi
 
 # Readback: restore RRD data from disk to /run/collectd (aligned with upstream readback.sh)
@@ -64,7 +68,7 @@ rm -rf "${RUNFOLDER}/localhost"
 for _d in "${DBFOLDER}"/*/; do
     _name="$(basename "$_d")"
     if [[ "${_name}" != "localhost" && -d "${DBFOLDER}/${_name}" ]]; then
-        printf '[init] migrating RRD data from hostname "%s" to "localhost"\n' "${_name}"
+        log_info "migrating RRD data from hostname \"${_name}\" to \"localhost\""
         mkdir -p "${DBFOLDER}/localhost"
         cp -a "${DBFOLDER}/${_name}/." "${DBFOLDER}/localhost/" 2>/dev/null || true
         rm -rf "${DBFOLDER}/${_name}"
@@ -78,14 +82,14 @@ readback_tar() {
     fi
     # Skip files that are too small to be valid
     if (( $(stat -c %s "${tarfile}") < 50000 )); then
-        printf '[init] WARNING: readback of %s skipped, file too small\n' "${tarfile}" >&2
+        log_warn "readback of ${tarfile} skipped, file too small"
         return 2
     fi
     if tar --overwrite --directory "${RUNFOLDER}" -xf "${tarfile}" 2>/dev/null; then
-        printf '[init] readback of %s was successful\n' "${tarfile}"
+        log_info "readback of ${tarfile} was successful"
         return 0
     fi
-    printf '[init] ERROR: readback of %s failed\n' "${tarfile}" >&2
+    log_error "readback of ${tarfile} failed"
     rm -rf "${RUNFOLDER}/localhost"
     return 9
 }
@@ -96,10 +100,10 @@ readback_folder() {
         return 2
     fi
     if cp -a "${folder}" "${RUNFOLDER}/localhost" 2>/dev/null; then
-        printf '[init] readback of %s was successful\n' "${folder}"
+        log_info "readback of ${folder} was successful"
         return 0
     fi
-    printf '[init] ERROR: readback of %s failed\n' "${folder}" >&2
+    log_error "readback of ${folder} failed"
     return 9
 }
 
@@ -120,7 +124,7 @@ elif readback_tar "${DBFOLDER}/auto-backup-$(date +%Y-week_%V).tar.gz"; then
 elif readback_tar "${DBFOLDER}/auto-backup-$(date +%Y-week_%V -d '1 week ago' 2>/dev/null).tar.gz" 2>/dev/null; then
     readback_success
 else
-    printf '[init] no valid existing RRD data found, starting fresh\n'
+    log_info "no valid existing RRD data found, starting fresh"
     readback_success
 fi
 
@@ -175,15 +179,15 @@ for _tracks_inst in all single_message; do
             RRA:MIN:0.8:1:3600
     fi
 done
-printf '[init] RRD stubs ready\n'
+log_info "RRD stubs ready"
 
 # Diagnostic: show what directories exist after readback
-printf '[init] collectd data directories in %s/localhost/:\n' "${RUNFOLDER}"
+log_info "collectd data directories in ${RUNFOLDER}/localhost/:"
 ls -1 "${RUNFOLDER}/localhost/" 2>/dev/null || printf '  (none)\n'
 
 # Count RRD files for visibility
 _rrd_total=$(find "${RUNFOLDER}/localhost" -name '*.rrd' 2>/dev/null | wc -l)
-printf '[init] total RRD files after readback: %d\n' "${_rrd_total}"
+log_info "total RRD files after readback: ${_rrd_total}"
 
 # Symlink /var/lib/collectd/rrd/localhost → /run/collectd/localhost
 # Upstream graphs1090.sh sources /etc/default/graphs1090 twice; the second source
@@ -193,7 +197,7 @@ if [[ -d "${DBFOLDER}/localhost" && ! -L "${DBFOLDER}/localhost" ]]; then
     rm -rf "${DBFOLDER}/localhost"
 fi
 ln -snf "${RUNFOLDER}/localhost" "${DBFOLDER}/localhost"
-printf '[init] symlink: %s/localhost → %s/localhost\n' "${DBFOLDER}" "${RUNFOLDER}"
+log_info "symlink: ${DBFOLDER}/localhost → ${RUNFOLDER}/localhost"
 
 # Belt-and-suspenders: also fix DB in config
 sed -i 's|^DB=.*|DB=/run/collectd|' /etc/default/graphs1090
@@ -207,7 +211,7 @@ sed -e "s|\${GRAPHS1090_PORT}|${graphs1090_port}|" \
 # Run boot.sh to configure HTML (nographs = skip graph generation, done by svc-graphs1090)
 source /etc/default/graphs1090
 if ! /usr/share/graphs1090/boot.sh nographs; then
-    printf '[init] ERROR: boot.sh exited with errors\n' >&2
+    log_error "boot.sh exited with errors"
 fi
 
 # Copy placeholder PNGs for graphs that would otherwise 404 (e.g. misc when
@@ -218,7 +222,7 @@ _placeholder_src="/usr/share/graphs1090/no-data.png"
 _placeholder_count=0
 
 if [[ ! -f "${_placeholder_src}" ]]; then
-    printf '[init] WARNING: placeholder source %s not found — generating fallback\n' "${_placeholder_src}" >&2
+    log_warn "placeholder source ${_placeholder_src} not found — generating fallback"
     # Generate a minimal white PNG placeholder using Python (no rrdtool dependency)
     python3 -c "import struct,zlib;W=619;H=324;raw=b''.join(b'\x00'+bytes([255,255,255])*W for _ in range(H));c=zlib.compress(raw);chunk=lambda t,d:struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff);f=open('${_placeholder_src}','wb');f.write(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',W,H,8,2,0,0,0))+chunk(b'IDAT',c)+chunk(b'IEND',b''));f.close()" 2>/dev/null || true
 fi
@@ -226,11 +230,11 @@ fi
 # Ensure the placeholder is also in the HTML dir for nginx error_page fallback
 if [[ -f "${_placeholder_src}" && ! -f /usr/share/graphs1090/html/no-data.png ]]; then
     cp "${_placeholder_src}" /usr/share/graphs1090/html/no-data.png
-    printf '[init] copied placeholder to HTML dir for nginx fallback\n'
+    log_info "copied placeholder to HTML dir for nginx fallback"
 fi
 
 if [[ -f "${_placeholder_src}" ]]; then
-    printf '[init] placeholder source: %s (%s bytes)\n' "${_placeholder_src}" "$(stat -c %s "${_placeholder_src}" 2>/dev/null || echo '?')"
+    log_info "placeholder source: ${_placeholder_src} ($(stat -c %s "${_placeholder_src}" 2>/dev/null || echo '?') bytes)"
 
     # Graph basenames that may 404 when their data source is unavailable:
     #   dump1090-localhost-misc      — requires gain-reporting hardware
@@ -249,15 +253,15 @@ if [[ -f "${_placeholder_src}" ]]; then
                 if cp "${_placeholder_src}" "${_target}"; then
                     _placeholder_count=$(( _placeholder_count + 1 ))
                 else
-                    printf '[init] ERROR: failed to create placeholder %s\n' "${_target}" >&2
+                    log_error "failed to create placeholder ${_target}"
                 fi
             fi
         done
     done
 else
-    printf '[init] ERROR: no placeholder source available — some graphs will 404 until data is collected\n' >&2
+    log_error "no placeholder source available — some graphs will 404 until data is collected"
 fi
-printf '[init] placeholder PNGs: %d created\n' "${_placeholder_count}"
+log_info "placeholder PNGs: ${_placeholder_count} created"
 
 # Set ownership
 if [[ -z ${LSIO_NON_ROOT_USER:-} ]]; then
@@ -267,4 +271,4 @@ if [[ -z ${LSIO_NON_ROOT_USER:-} ]]; then
         /usr/share/graphs1090 2>/dev/null || true
 fi
 
-printf '[init] graphs1090 initialization complete\n'
+log_info "graphs1090 initialization complete"
