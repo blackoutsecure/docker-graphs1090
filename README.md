@@ -7,7 +7,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/blackoutsecure/docker-graphs1090?style=flat-square&color=E7931D&logo=github)](https://github.com/blackoutsecure/docker-graphs1090/stargazers)
 [![Docker Pulls](https://img.shields.io/docker/pulls/blackoutsecure/graphs1090?style=flat-square&color=E7931D&logo=docker&logoColor=FFFFFF)](https://hub.docker.com/r/blackoutsecure/graphs1090)
 [![GitHub Release](https://img.shields.io/github/release/blackoutsecure/docker-graphs1090.svg?style=flat-square&color=E7931D&logo=github&logoColor=FFFFFF)](https://github.com/blackoutsecure/docker-graphs1090/releases)
-[![Blackout Secure Launchpad](https://img.shields.io/github/actions/workflow/status/blackoutsecure/docker-graphs1090/bos-launchpad.yml?style=flat-square&label=blackout%20secure%20launchpad&color=E7931D)](https://github.com/blackoutsecure/docker-graphs1090/actions/workflows/bos-launchpad.yml)
+[![Blackout Secure Launchpad](https://img.shields.io/github/actions/workflow/status/blackoutsecure/docker-graphs1090/bos-launchpad-release.yml?style=flat-square&label=blackout%20secure%20launchpad&color=E7931D)](https://github.com/blackoutsecure/docker-graphs1090/actions/workflows/bos-launchpad-release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Made by BlackoutSecure](https://img.shields.io/badge/made%20by-BlackoutSecure-1f1f1f?style=flat-square)](https://github.com/blackoutsecure)
 
