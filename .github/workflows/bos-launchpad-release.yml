@@ -88,6 +88,12 @@ jobs:
       dockerhub_namespace: ${{ vars.DOCKERHUB_NAMESPACE }}
       balena_namespace:    ${{ vars.BALENA_NAMESPACE }}
 
+      # Docker Hub caps `short_description` at 100 chars. The GitHub repo
+      # description (which the hub would otherwise fall back to) is longer
+      # than that, so pin an explicit one here to avoid silent truncation.
+      docker_short_description: >-
+        graphs1090 — performance graphs for readsb / dump1090-fa ADS-B receivers, hub-built
+
       # Render balena.yml dynamically — no checked-in copy.
       balena_generate_yml: true
 
